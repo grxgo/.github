@@ -83,10 +83,39 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          TAG=$(git cliff --config .release-config/cliff.toml --bumped-version)
-          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            echo "::notice::No changes since $TAG - skipping release."
+          LATEST=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+
+          # The range is not optional. Without it git-cliff only weighs the
+          # commits on the tag's direct line of descent, and after a PR merge
+          # that is the merge commit alone — which cliff.toml skips. The whole
+          # PR then goes unnoticed and main silently stops releasing
+          # (grxgo/happahabba#83 shipped nothing for exactly this reason).
+          # if, not "[ ... ] && ...": the runner's shell is bash -e, where a
+          # false AND-list would abort the step on the very first release.
+          RANGE=()
+          if [ -n "$LATEST" ]; then
+            RANGE=("$LATEST..HEAD")
+          fi
+
+          TAG=$(git cliff --config .release-config/cliff.toml "${RANGE[@]}" --bumped-version)
+
+          if [ -n "$LATEST" ] && [ -z "$(git log --oneline "$LATEST"..HEAD)" ]; then
+            echo "::notice::No commits since $LATEST - skipping release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            # Commits landed, but none of them carries a bump — a branch of
+            # nothing but merge commits, say. Release anyway at the patch
+            # level; a main that keeps drifting from its latest tag is worse
+            # than a release with a thin changelog.
+            IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+            if [[ "$MAJOR" =~ ^[0-9]+$ && "$MINOR" =~ ^[0-9]+$ && "$PATCH" =~ ^[0-9]+$ ]]; then
+              TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+              echo "::notice::No bumpable commit since $LATEST - releasing $TAG at the patch level."
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "::notice::Cannot derive a patch bump from '$LATEST' - skipping release."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
