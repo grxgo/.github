@@ -51,6 +51,9 @@ Every merge therefore ships: `main` never diverges from the latest release.
   points to a version that does not exist on GHCR.
 - One release at a time per repo (`concurrency: chart-release`): parallel
   merges queue and each still gets its own version.
+- Versions only ever go up: the bump is measured from the highest tag in the
+  repo, not from the one nearest to `HEAD`, so a tag merged back into `main`
+  cannot make the next release collide with an existing version.
 - Baseline: all repos were tagged `v0.2.0` on 2026-07-14, above the retired
   `0.1.<run_number>` scheme, so Flux's semver ranges migrate seamlessly.
 
