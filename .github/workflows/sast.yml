@@ -1,0 +1,48 @@
+# Reusable SAST scan for all grxgo repos (grxgo/household-service#26). CodeQL
+# is out on the free plan for private repos, so this is Semgrep CE.
+#
+# Caller:
+#
+#   sast:
+#     permissions:
+#       contents: read
+#     uses: grxgo/.github/.github/workflows/sast.yml@<sha>
+#
+# Shared rather than copied per repo so a ruleset change reaches every service
+# at once — the alternative is two configurations that drift until one of them
+# quietly stops covering something.
+name: SAST
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: >-
+          Semgrep rulesets, space-separated and each prefixed with --config.
+          Override only to add rules; dropping one narrows the scan for that
+          repo alone, which is the drift this workflow exists to prevent.
+        required: false
+        type: string
+        default: "--config=p/java --config=p/security-audit"
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      # Pinned by digest, not by tag: a tag can be moved, and this image runs
+      # against the repository's source. Dependabot bumps it like any action.
+      image: semgrep/semgrep@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # --error fails the job on any finding. Both services were at zero when
+      # this was introduced, so it is enforceable from the start rather than
+      # after a baseline that nobody would revisit. Rules are fetched from the
+      # registry at scan time, so they stay current even though the engine
+      # image is pinned.
+      - name: Semgrep
+        run: semgrep scan ${{ inputs.config }} --error --metrics=off
