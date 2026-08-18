@@ -11,4 +11,10 @@ on:
 
 jobs:
   commitlint:
+    # The action reads the PR's commit list via the API; explicit permissions
+    # keep this working now that the org default token is read-only — the
+    # caller block conventional-commits.yml documents in its header.
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/conventional-commits.yml
