@@ -17,6 +17,13 @@
 #     with:
 #       chart-path: charts/my-service
 #       image-name: my-service
+#       # Optional, and worth it wherever the build job already compiled the
+#       # thing: without it the image build compiles a second time, from a
+#       # container that has neither the dependency cache nor the build tool
+#       # (platform-infra#145 measured 152 s of 226 s on that alone). The build
+#       # job uploads target/*.jar as dist/app.jar under this name, and the
+#       # Dockerfile carries a `jar` stage for it.
+#       build-artifact: app-jar
 name: Release Chart
 
 on:
@@ -56,6 +63,18 @@ on:
         required: false
         type: boolean
         default: true
+      build-artifact:
+        description: >-
+          Artifact from the caller's build job holding the already-compiled
+          application archive. It is downloaded into ./dist and handed to the
+          image build as the named context `jar`, which stands in for the
+          Dockerfile stage of that name — BuildKit then never runs the compile
+          stage behind it. Empty means the image is built from source, which
+          costs a second full compile without the caller's dependency cache
+          (platform-infra#145).
+        required: false
+        type: string
+        default: ''
 
 env:
   GIT_CLIFF_VERSION: 2.9.1
@@ -156,6 +175,34 @@ jobs:
         if: steps.version.outputs.skip == 'false' && inputs.image-name != ''
         uses: docker/setup-buildx-action@v3
 
+      # Same workflow run, so the runtime token is enough — no actions: read
+      # on the caller. The name must match what the caller uploaded, and the
+      # archive inside must be called app.jar: the Dockerfile's runtime stage
+      # copies /app.jar out of the `jar` context, and once that context is a
+      # directory the leading slash is this directory's root.
+      - name: Fetch the archive the build job already produced
+        if: >-
+          steps.version.outputs.skip == 'false' && inputs.image-name != ''
+          && inputs.build-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.build-artifact }}
+          path: dist
+
+      - name: The archive is where the image build expects it
+        if: >-
+          steps.version.outputs.skip == 'false' && inputs.image-name != ''
+          && inputs.build-artifact != ''
+        run: |
+          # An empty or misnamed artifact would otherwise surface as a COPY
+          # that silently brings nothing, and the image would ship without the
+          # application.
+          test -s dist/app.jar || {
+            echo "::error::artifact '${{ inputs.build-artifact }}' has no dist/app.jar"
+            ls -la dist 2>/dev/null || true
+            exit 1
+          }
+
       - name: Build and push image
         id: image
         if: steps.version.outputs.skip == 'false' && inputs.image-name != ''
@@ -171,8 +218,17 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:${{ env.VERSION }}
             ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}:sha-${{ github.sha }}
+          # Replaces the Dockerfile's `jar` stage with the directory the
+          # artifact was unpacked into, so the compile stage behind it never
+          # runs. Empty when no artifact was passed — then the Dockerfile
+          # builds from source as before.
+          build-contexts: ${{ inputs.build-artifact != '' && 'jar=./dist' || '' }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=max exports every intermediate layer, which for a build stage
+          # that compiles is both the expensive half of the export and the
+          # half that a source change invalidates anyway. With the archive
+          # handed in there is no such stage left to cache.
+          cache-to: type=gha,mode=${{ inputs.build-artifact != '' && 'min' || 'max' }}
           # BuildKit secret for Dockerfiles whose build stage resolves Maven
           # artifacts from GitHub Packages (platform-parent); never lands in
           # a layer, unused by Dockerfiles that don't mount it
