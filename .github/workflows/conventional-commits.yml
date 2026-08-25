@@ -19,7 +19,13 @@
 # @commitlint/config-conventional apply automatically (fix:/feat:/docs:/… +
 # BREAKING CHANGE) — exactly the base that semver bumps and changelogs will
 # be derived from.
-name: Conventional Commits
+# Named for what it is, not for what it does. The caller next door is also
+# called "Conventional Commits" — that is the name that belongs on a check —
+# and with both carrying it the Actions list showed the same entry twice and
+# read like one of them was left over (grxgo/platform-infra#145). The workflow
+# name is not part of the check context: that is built from the job ids,
+# `commitlint / commitlint`, so the ruleset on main is unaffected.
+name: Conventional Commits (reusable)
 
 on:
   workflow_call: {}
